@@ -1,0 +1,152 @@
+// ==UserScript==
+// @name         智能复制解锁（弹窗拦截版）
+// @namespace    http://tampermonkey.net/
+// @version      3.0
+// @description  检测到复制弹窗时自动关闭，按需触发不打扰
+// @author       自定义
+// @match        *://*/*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    let toastTimer = null;
+    let isUnlocked = false;
+
+    function showToast(message) {
+        if (toastTimer) clearTimeout(toastTimer);
+        const oldToast = document.getElementById('unlock-toast');
+        if (oldToast) oldToast.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'unlock-toast';
+        toast.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            background-color: #4CAF50;
+            color: white;
+            font-size: 14px;
+            font-family: sans-serif;
+            z-index: 2147483647;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            pointer-events: none;
+        `;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        requestAnimationFrame(() => { toast.style.opacity = '1'; });
+        toastTimer = setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 300);
+        }, 2500);
+    }
+
+    function closeLoginModal() {
+        const modalSelectors = [
+            '.login-modal', '.pop-login', '#login_modal',
+            '.modal-overlay', '.login-dialog', '.copy-login-box',
+            '[class*="login"][class*="modal"]',
+            '[class*="pop"][class*="login"]',
+            '[class*="copy"][class*="mask"]',
+            '.common-dialog', '.login-tip',
+            '.code-snippet-modal',
+            '[class*="mask"]', '[class*="overlay"]',
+            'div[style*="z-index: 999"]',
+            'div[style*="z-index:999"]'
+        ];
+
+        let closed = false;
+
+        document.querySelectorAll('.mask, .modal-backdrop, .overlay, [class*="mask"]').forEach(el => {
+            if (el.offsetHeight > 0) {
+                el.style.display = 'none';
+                el.style.visibility = 'hidden';
+                closed = true;
+            }
+        });
+
+        modalSelectors.forEach(sel => {
+            try {
+                document.querySelectorAll(sel).forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight) {
+                        const closeBtn = el.querySelector('.close, .icon-close, [class*="close"], [aria-label*="关闭"]');
+                        if (closeBtn) {
+                            closeBtn.click();
+                        } else {
+                            el.style.display = 'none';
+                            el.style.visibility = 'hidden';
+                            el.style.opacity = '0';
+                        }
+                        closed = true;
+                    }
+                });
+            } catch(e) {}
+        });
+
+        if (document.body.style.overflow === 'hidden') {
+            document.body.style.overflow = '';
+            closed = true;
+        }
+
+        return closed;
+    }
+
+    function onCopyAttempt(e) {
+        setTimeout(() => {
+            const hasModal = closeLoginModal();
+            if (hasModal) {
+                showToast('🔓 已拦截登录弹窗，复制成功！');
+                isUnlocked = true;
+            }
+        }, 200);
+    }
+
+    document.addEventListener('copy', onCopyAttempt, true);
+
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+            setTimeout(() => {
+                const hasModal = closeLoginModal();
+                if (hasModal) {
+                    showToast('🔓 已拦截登录弹窗！');
+                    isUnlocked = true;
+                }
+            }, 200);
+        }
+    }, true);
+
+    const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType === 1) {
+                    const classAttr = node.className || '';
+                    const idAttr = node.id || '';
+                    if (classAttr.match(/login|modal|mask|overlay|pop/i) ||
+                        idAttr.match(/login|modal|mask|overlay|pop/i)) {
+                        setTimeout(() => {
+                            const hasModal = closeLoginModal();
+                            if (hasModal && !isUnlocked) {
+                                showToast('🔓 已自动关闭弹窗！');
+                                isUnlocked = true;
+                            }
+                        }, 100);
+                    }
+                }
+            }
+        }
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+})();
