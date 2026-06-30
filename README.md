@@ -30,7 +30,7 @@
 
 **方法一：直接安装（推荐）**
 
-1. 点击链接直接安装：[smart-copy-unlock.user.js](https://github.com/你的用户名/smart-copy-unlock/raw/main/smart-copy-unlock.user.js)
+1. 点击链接直接安装：[smart-copy-unlock.user.js](https://github.com/Sec-Joe/smart_copy_unlock/raw/main/smart-copy-unlock.user.js)
 2. Tampermonkey 会自动弹出安装页面，点击「安装」
 
 **方法二：手动安装**
