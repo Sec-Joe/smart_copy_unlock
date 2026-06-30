@@ -1,0 +1,287 @@
+// ==UserScript==
+// @name         智能复制解锁（彻底清除遮罩+自动复制版）
+// @namespace    http://tampermonkey.net/
+// @version      4.0
+// @description  检测到复制弹窗时自动关闭、清除遮罩、并重新触发复制
+// @author       自定义
+// @match        *://*/*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    let toastTimer = null;
+    let isProcessing = false;
+
+    // 显示提示
+    function showToast(message) {
+        if (toastTimer) clearTimeout(toastTimer);
+        const oldToast = document.getElementById('unlock-toast');
+        if (oldToast) oldToast.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'unlock-toast';
+        toast.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            background-color: #4CAF50;
+            color: white;
+            font-size: 14px;
+            font-family: sans-serif;
+            z-index: 2147483647;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            pointer-events: none;
+        `;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        requestAnimationFrame(() => { toast.style.opacity = '1'; });
+        toastTimer = setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 300);
+        }, 2500);
+    }
+
+    // 彻底清除所有遮罩和弹窗
+    function nukeAllBlockers() {
+        const blockers = [];
+
+        // 1. 移除所有遮罩层
+        const maskSelectors = [
+            '.mask', '.overlay', '.modal-backdrop', '.login-mask',
+            '[class*="mask"]', '[class*="overlay"]', '[class*="backdrop"]',
+            '#mask', '#overlay', '#loginMask',
+            '.cd-popup-overlay', '.popup_overlay',
+            '[style*="position: fixed"][style*="z-index: 999"]',
+            '[style*="position: fixed"][style*="z-index: 1000"]',
+            '[style*="position: fixed"][style*="z-index: 10000"]'
+        ];
+
+        maskSelectors.forEach(sel => {
+            try {
+                document.querySelectorAll(sel).forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        el.parentNode.removeChild(el);
+                        blockers.push('遮罩层');
+                    }
+                });
+            } catch(e) {}
+        });
+
+        // 2. 隐藏所有弹窗
+        const modalSelectors = [
+            '.login-modal', '.pop-login', '#login_modal',
+            '.modal', '.dialog', '.popup',
+            '[class*="modal"]', '[class*="dialog"]', '[class*="popup"]'
+        ];
+
+        modalSelectors.forEach(sel => {
+            try {
+                document.querySelectorAll(sel).forEach(el => {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        el.style.opacity = '0';
+                        el.setAttribute('aria-hidden', 'true');
+                        blockers.push('弹窗');
+                    }
+                });
+            } catch(e) {}
+        });
+
+        // 3. 恢复页面滚动
+        document.body.style.overflow = '';
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.documentElement.style.overflow = '';
+
+        // 4. 移除所有半透明覆盖层（通过检查元素大小和透明度）
+        document.querySelectorAll('*').forEach(el => {
+            const style = window.getComputedStyle(el);
+            const isFixed = style.position === 'fixed';
+            const isAbs = style.position === 'absolute';
+            const zIndex = parseInt(style.zIndex) || 0;
+            const opacity = parseFloat(style.opacity) || 1;
+            const bg = style.backgroundColor;
+
+            if ((isFixed || isAbs) && zIndex > 100 && opacity < 1) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > window.innerWidth * 0.8 && rect.height > window.innerHeight * 0.8) {
+                    el.parentNode.removeChild(el);
+                    blockers.push('覆盖层');
+                }
+            }
+        });
+
+        return blockers.length > 0;
+    }
+
+    // 强制启用复制
+    function forceEnableCopy() {
+        // 注入样式
+        const style = document.createElement('style');
+        style.id = 'unlock-copy-style';
+        style.textContent = `
+            * {
+                user-select: text !important;
+                -webkit-user-select: text !important;
+                -moz-user-select: text !important;
+                -ms-user-select: text !important;
+                pointer-events: auto !important;
+            }
+            body {
+                overflow: auto !important;
+                pointer-events: auto !important;
+            }
+            ::selection {
+                background: #b3d4fc !important;
+            }
+        `;
+        if (!document.getElementById('unlock-copy-style')) {
+            document.head.appendChild(style);
+        }
+
+        // 遍历所有元素，强制启用选择
+        document.querySelectorAll('*').forEach(el => {
+            el.style.userSelect = 'text';
+            el.style.webkitUserSelect = 'text';
+            el.style.MozUserSelect = 'text';
+            el.style.msUserSelect = 'text';
+            el.oncopy = null;
+            el.oncut = null;
+            el.onpaste = null;
+            el.oncontextmenu = null;
+            el.onselectstart = null;
+        });
+    }
+
+    // 复制选中内容
+    function copySelection() {
+        const selection = window.getSelection();
+        if (!selection || !selection.toString().trim()) {
+            showToast('⚠️ 请先选中要复制的文本');
+            return false;
+        }
+
+        try {
+            // 方法1：Clipboard API
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(selection.toString()).then(() => {
+                    showToast('✅ 复制成功！');
+                }).catch(() => {
+                    fallbackCopy();
+                });
+            } else {
+                fallbackCopy();
+            }
+        } catch(e) {
+            fallbackCopy();
+        }
+
+        function fallbackCopy() {
+            const textarea = document.createElement('textarea');
+            textarea.value = selection.toString();
+            textarea.style.cssText = 'position:fixed;left:-9999px;';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showToast('✅ 复制成功！');
+            } catch(e) {
+                showToast('⚠️ 请按 Ctrl+C 手动复制');
+            }
+            document.body.removeChild(textarea);
+        }
+
+        return true;
+    }
+
+    // 拦截复制事件
+    document.addEventListener('copy', (e) => {
+        if (isProcessing) return;
+
+        setTimeout(() => {
+            const hadBlockers = nukeAllBlockers();
+
+            if (hadBlockers) {
+                isProcessing = true;
+                forceEnableCopy();
+
+                setTimeout(() => {
+                    copySelection();
+                    isProcessing = false;
+                }, 500);
+            }
+        }, 100);
+    }, true);
+
+    // 监听 Ctrl+C
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+            if (isProcessing) return;
+
+            setTimeout(() => {
+                const hadBlockers = nukeAllBlockers();
+
+                if (hadBlockers) {
+                    isProcessing = true;
+                    forceEnableCopy();
+
+                    setTimeout(() => {
+                        copySelection();
+                        isProcessing = false;
+                    }, 500);
+                }
+            }, 100);
+        }
+    }, true);
+
+    // MutationObserver 监控弹窗出现
+    const observer = new MutationObserver((mutations) => {
+        let shouldNuke = false;
+
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType === 1) {
+                    const html = node.outerHTML || '';
+                    if (html.match(/login|modal|mask|overlay|pop|弹窗|登录/i)) {
+                        shouldNuke = true;
+                        break;
+                    }
+                }
+            }
+            if (shouldNuke) break;
+        }
+
+        if (shouldNuke) {
+            setTimeout(() => {
+                nukeAllBlockers();
+                forceEnableCopy();
+            }, 100);
+        }
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    // 页面加载完成后，强制执行一次
+    if (document.readyState === 'complete') {
+        forceEnableCopy();
+    } else {
+        window.addEventListener('load', forceEnableCopy);
+    }
+
+    console.log('🔓 智能复制解锁脚本已加载（完全版）');
+
+})();
